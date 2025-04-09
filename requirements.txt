@@ -1,0 +1,6 @@
+pandas
+transformers==4.49.0
+torch
+sentence-transformers
+pymorphy2
+pymorphy2-dicts-uk
