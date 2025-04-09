@@ -36,23 +36,29 @@ def lower_grammar_restrictions(grammemes, target_gender):
     new_grammemes = set(item for item in list(grammemes) if item not in grammemes_to_remove)
     return new_grammemes
 
-def tokenize_with_whitespace(text):
-    """
-    Tokenizes text into a list where each element is either:
-    - A contiguous whitespace sequence,
-    - A contiguous punctuation sequence,
-    - Or a contiguous word (alphanumeric) sequence.
-    
-    This preserves the original spacing and punctuation.
-    """
-    # The pattern captures:
-    #   - (\s+): one or more whitespace characters
-    #   - ([^\w\s]+): one or more characters that are not alphanumeric or whitespace (punctuation)
-    #   - (\w+): one or more alphanumeric characters (words)
-    pattern = r'(\s+|[^\w\s]+|\w+)'
+def tokenize_ukrainian(text):
+    pattern = r"(\s+|[^\w\s']+|[\w']+)"
     tokens = re.findall(pattern, text)
-    return tokens
+    
+    final_tokens = []
+    i = 0
+    while i < len(tokens):
+        if (
+            i + 2 < len(tokens)
+            and tokens[i].isalpha()
+            and tokens[i+1] == "'"
+            and tokens[i+2].isalpha()
+        ):
+            final_tokens.append(tokens[i] + tokens[i+1] + tokens[i+2])
+            i += 3
+        else:
+            final_tokens.append(tokens[i])
+            i += 1
+    return final_tokens
 
+def is_word_token(tok):
+    return tok.strip().isalpha()  # This excludes whitespace and punctuation
+    
 def get_normal_form(word, morph):
     parsed = morph.parse(word)
     if parsed:
@@ -73,8 +79,7 @@ def get_all_synonyms(word):
 def replace_word(sentence, target, replacement):
     target_normal = morph.parse(target)[0].normal_form
     
-    # tokens = re.findall(r'\w+|[^\w\s]', sentence)
-    tokens = tokenize_with_whitespace(sentence)
+    tokens = tokenize_ukrainian(sentence)
     
     replaced = False
     new_tokens = []
@@ -132,8 +137,7 @@ def replace_word(sentence, target, replacement):
     return new_tokens
 
 def attack(text_ls, true_label, predictor, stop_words_set, sim_predictor=None,
-           import_score_threshold=-1., sim_score_threshold=0.5, sim_score_window=15, synonym_num=50,
-           batch_size=32):
+           import_score_threshold=-1., sim_score_threshold=0.5, sim_score_window=15, synonym_num=50):
     
     orig_probs = predictor([text_ls]).squeeze()
     orig_label = torch.argmax(orig_probs)
@@ -142,29 +146,28 @@ def attack(text_ls, true_label, predictor, stop_words_set, sim_predictor=None,
     if true_label != orig_label:
         return '', 0, orig_label, orig_label, 0
     else:
-        len_text = len(text_ls)
-        if len_text < sim_score_window:
-            sim_score_threshold = 0.1  # shut down the similarity thresholding function
-        half_sim_score_window = (sim_score_window - 1) // 2
         num_queries = 1
+        len_text = len(text_ls)
 
-        # get the pos and verb tense info
         pos_ls = criteria.get_pos(text_ls)
-
+        
         # get importance score
-        leave_1_texts = [text_ls[:ii] + ['<oov>'] + text_ls[min(ii + 1, len_text):] for ii in range(len_text)]
-        leave_1_probs = predictor(leave_1_texts,
-                                # batch_size=batch_size
-                                )
+        perturbable_indices = [i for i, tok in enumerate(text_ls) if is_word_token(tok) and tok not in stop_words_set]
+        leave_1_texts = [text_ls[:i] + ['<oov>'] + text_ls[i+1:] for i in perturbable_indices]
+        if len(leave_1_texts) == 0:
+            print('no words for pertubation', ''.join(text_ls))
+            return '', 0, orig_label, orig_label, 0
+    
+        leave_1_probs = predictor(leave_1_texts)
+
         num_queries += len(leave_1_texts)
         leave_1_probs_argmax = torch.argmax(leave_1_probs, dim=-1)
         import_scores = (orig_prob - leave_1_probs[:, orig_label] + (leave_1_probs_argmax != orig_label).float() * (leave_1_probs.max(dim=-1)[0] - torch.index_select(orig_probs, 0, leave_1_probs_argmax))).data.cpu().numpy()
-
-        # get words to perturb ranked by importance scorefor word in words_perturb
         words_perturb = []
-        for idx, score in sorted(enumerate(import_scores), key=lambda x: x[1], reverse=True):
+
+        for idx, score in sorted(zip(perturbable_indices, import_scores), key=lambda x: x[1], reverse=True):
             try:
-                if score > import_score_threshold and text_ls[idx] not in stop_words_set:
+                if score > import_score_threshold:
                     words_perturb.append((idx, text_ls[idx]))
             except:
                 print(idx, len(text_ls), import_scores.shape, text_ls, len(leave_1_texts))
@@ -181,44 +184,28 @@ def attack(text_ls, true_label, predictor, stop_words_set, sim_predictor=None,
                 synonyms_all.append((position, synonyms))
 
         # start replacing and attacking
-        text_prime = text_ls[:]
-        text_cache = text_prime[:]
+        text_prime = text_ls.copy()
+        text_cache = text_prime.copy()
+
         num_changed = 0
+
         for idx, synonyms in synonyms_all:
-            # new_texts = [text_prime[:idx] + [synonym] + text_prime[min(idx + 1, len_text):] for synonym in synonyms]
-            new_texts = [replace_word(' '.join(text_prime), text_prime[idx], synonym) for synonym in synonyms]
+            new_texts = [replace_word(''.join(text_prime), text_prime[idx], synonym) for synonym in synonyms]
             new_texts = [x for x in new_texts if x is not None]
             if len(new_texts) == 0:
-                print(f"no synonyms for word {text_prime[idx], text_prime}")
+                print(f"no synonyms for word {text_prime[idx]}")
                 continue 
 
-            new_probs = predictor(new_texts, 
-                                #batch_size=batch_size
-                                )
-            
-            # compute semantic similarity
-            # if idx >= half_sim_score_window and len_text - idx - 1 >= half_sim_score_window:
-            #     text_range_min = idx - half_sim_score_window
-            #     text_range_max = idx + half_sim_score_window + 1
-            # elif idx < half_sim_score_window and len_text - idx - 1 >= half_sim_score_window:
-            #     text_range_min = 0
-            #     text_range_max = sim_score_window
-            # elif idx >= half_sim_score_window and len_text - idx - 1 < half_sim_score_window:
-            #     text_range_min = len_text - sim_score_window
-            #     text_range_max = len_text
-            # else:
-            #     text_range_min = 0
-            #     text_range_max = len_text
-
-            # semantic_sims = sim_predictor.semantic_sim([' '.join(text_cache[text_range_min:text_range_max])] * len(new_texts),
-            #                                         list(map(lambda x: ' '.join(x[text_range_min:text_range_max]), new_texts)))[0]
-            semantic_sims = sim_predictor.semantic_sim(text_cache*len(new_texts), new_texts)[0]
+            new_probs = predictor(new_texts)
             num_queries += len(new_texts)
+            
+            semantic_sims = sim_predictor.semantic_sim([''.join(text_cache)] * len(new_texts), [''.join(text) for text in new_texts])[0]
             if len(new_probs.shape) < 2:
                 new_probs = new_probs.unsqueeze(0)
+
             new_probs_mask = (orig_label != torch.argmax(new_probs, dim=-1)).data.cpu().numpy()
-            # prevent bad synonyms
             new_probs_mask *= (semantic_sims >= sim_score_threshold)
+
             # prevent incompatible pos
             synonyms_pos_ls = [criteria.get_pos(new_text[max(idx - 4, 0):idx + 5])[min(4, idx)]
                                 if len(new_text) > 10 else criteria.get_pos(new_text)[idx] for new_text in new_texts]
@@ -237,7 +224,7 @@ def attack(text_ls, true_label, predictor, stop_words_set, sim_predictor=None,
                     text_prime[idx] = synonyms[new_label_prob_argmin]
                     num_changed += 1
             text_cache = text_prime[:]
-        return ' '.join(text_prime), num_changed, orig_label, torch.argmax(predictor([text_prime])), num_queries
+        return ''.join(text_prime), num_changed, orig_label, torch.argmax(predictor([text_prime])), num_queries
 
 
 def main():
@@ -336,24 +323,12 @@ def main():
 
         true_label = true_label - 1
         
-        if perturb_ratio > 0.:
-            pass
-    #         new_text, num_changed, orig_label, \
-    #         new_label, num_queries = random_attack(text, true_label, predictor, args.perturb_ratio, stop_words_set,
-    #                                                 word2idx, idx2word, cos_sim, sim_predictor=sbert,
-    #                                                 sim_score_threshold=args.sim_score_threshold,
-    #                                                 import_score_threshold=args.import_score_threshold,
-    #                                                 sim_score_window=args.sim_score_window,
-    #                                                 synonym_num=args.synonym_num,
-    #                                                 batch_size=args.batch_size)
-        else:
-            new_text, num_changed, orig_label, \
-            new_label, num_queries = attack(text, true_label, predictor, stop_words_set, sim_predictor=sbert,
-                                            sim_score_threshold=sim_score_threshold,
-                                            import_score_threshold=import_score_threshold,
-                                            sim_score_window=sim_score_window,
-                                            synonym_num=synonym_num,
-                                            batch_size=batch_size)
+
+        new_text, num_changed, orig_label, new_label, num_queries = attack(text, true_label, predictor, stop_words_set, sim_predictor=sbert,
+                                                                           sim_score_threshold=sim_score_threshold,
+                                                                           import_score_threshold=import_score_threshold,
+                                                                           sim_score_window=sim_score_window,
+                                                                           synonym_num=synonym_num)
 
         if true_label != orig_label:
             orig_failures += 1
@@ -373,8 +348,8 @@ def main():
 
     message = 'For target model {}: original accuracy: {:.3f}%, adv accuracy: {:.3f}%, ' \
               'avg changed rate: {:.3f}%, num of queries: {:.1f}\n'.format(target_model,
-                                                                     (1-orig_failures/1000)*100,
-                                                                     (1-adv_failures/1000)*100,
+                                                                     (1-orig_failures/len(data))*100,
+                                                                     (1-adv_failures/len(data))*100,
                                                                      np.mean(changed_rates)*100,
                                                                      np.mean(nums_queries))
     print(message)

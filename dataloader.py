@@ -1,31 +1,27 @@
 import pandas as pd
 import random
+import re
 
-# def read_corpus(path, clean=True, MR=True, encoding='utf8', shuffle=False, lower=True):
-#     data = []
-#     labels = []
-#     with open(path, encoding=encoding) as fin:
-#         for line in fin:
-#             if MR:
-#                 label, sep, text = line.partition(' ')
-#                 label = int(label)
-#             else:
-#                 label, sep, text = line.partition(',')
-#                 label = int(label) - 1
-#             if clean:
-#                 text = clean_str(text.strip()) if clean else text.strip()
-#             if lower:
-#                 text = text.lower()
-#             labels.append(label)
-#             data.append(text.split())
+def tokenize_ukrainian(text):
+    pattern = r"(\s+|[^\w\s']+|[\w']+)"
+    tokens = re.findall(pattern, text)
+    
+    final_tokens = []
+    i = 0
+    while i < len(tokens):
+        if (
+            i + 2 < len(tokens)
+            and tokens[i].isalpha()
+            and tokens[i+1] == "'"
+            and tokens[i+2].isalpha()
+        ):
+            final_tokens.append(tokens[i] + tokens[i+1] + tokens[i+2])
+            i += 3
+        else:
+            final_tokens.append(tokens[i])
+            i += 1
+    return final_tokens
 
-#     if shuffle:
-#         perm = list(range(len(data)))
-#         random.shuffle(perm)
-#         data = [data[i] for i in perm]
-#         labels = [labels[i] for i in perm]
-
-#     return data, labels
 
 def clean_str(string, TREC=False):
     """
@@ -69,7 +65,8 @@ def read_corpus(path, clean=False, encoding='utf8', shuffle=False, lower=True):
             text = text.lower()
 
         labels.append(label)
-        data.append(text.split())
+        # data.append(text.split())
+        data.append(tokenize_ukrainian(text))
 
     if shuffle:
         combined = list(zip(data, labels))
