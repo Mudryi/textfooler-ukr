@@ -1,6 +1,10 @@
 import re
 
 
+INTERCHANGEABLE_POS = {
+    'PRCL': {'ADVB'},
+    'ADVB': {'PRCL'}}
+
 def tokenize_ukrainian(text):
     pattern = r"(\s+|[^\w\s']+|[\w']+)"
     tokens = re.findall(pattern, text)
@@ -23,23 +27,39 @@ def tokenize_ukrainian(text):
 
 
 def get_correct_parsed_result(parsing_results, target_pos, target_gender=None):
+    acceptable_pos = {target_pos} | INTERCHANGEABLE_POS.get(target_pos, set())
 
     for result in parsing_results:
-        if result.tag.POS == target_pos and target_gender and result.tag.gender == target_gender:
+        if result.tag.POS in acceptable_pos and target_gender and result.tag.gender == target_gender:
             return result
 
     for result in parsing_results:
-        if result.tag.POS == target_pos:
+        if result.tag.POS in acceptable_pos:
             return result
 
     return None
 
 
-def lower_grammar_restrictions(grammemes, target_gender):
-    grammemes_to_remove = [str(target_gender), 'Refl', 'compb', 'COMP']
+def lower_grammar_restrictions(grammemes):
+    grammemes_to_remove = ['Refl', 'compb', 'COMP', 'Qual']
     
     new_grammemes = set(item for item in list(grammemes) if item not in grammemes_to_remove)
     return new_grammemes
+
+
+def stepwise_inflect(parse, target_grammemes, 
+                     preferred_order=('plur', 'sing', 'femn', 'masc', 'neut', 'nomn', 'accs', 'gent', 'datv', 'loct', 'ablt', 'anim', 'inan')):
+    current = parse
+    applied = set()
+
+    sorted_grammemes = sorted(target_grammemes, key=lambda g: preferred_order.index(g) if g in preferred_order else len(preferred_order))
+    
+    for gram in sorted_grammemes:
+        attempt = current.inflect(applied | {gram})
+        if attempt is not None:
+            current = attempt
+            applied |= {gram}
+    return current
 
 
 def replace_word(sentence, target, replacement, morph):
@@ -50,40 +70,36 @@ def replace_word(sentence, target, replacement, morph):
     replaced = False
     new_tokens = []
 
-    for i, token in enumerate(tokens):
-        target_gender = None
-        
+    for i, token in enumerate(tokens):        
         if re.match(r'\w+', token):
             parsed_word = morph.parse(token)[0]
             
             if parsed_word.normal_form == target_normal:
-                case_and_number_grammemes = parsed_word.tag.grammemes
                 target_pos = parsed_word.tag.POS
 
-                if target_pos == 'NOUN' or target_pos == 'ADJF':
-                    target_gender = parsed_word.tag.gender
+                target_gender = parsed_word.tag.gender if target_pos in ('NOUN', 'ADJF') else None
 
                 replacement_parsed = morph.parse(replacement)
+
                 matched_replacement = get_correct_parsed_result(replacement_parsed, target_pos, target_gender)
 
-                if matched_replacement:
-                    replacement_word = matched_replacement.inflect(case_and_number_grammemes)
-                else:
-                    print('bad match')
+                if not matched_replacement:
+                    print('bad match', target, replacement)
+                    # print(target_pos, target_gender)
+                    # print(replacement_parsed)
                     return None
-            
-                if replacement_word:
-                    replacement_word = replacement_word.word
-                else:
-                    case_and_number_grammemes = lower_grammar_restrictions(case_and_number_grammemes, target_gender)
-                    replacement_word = matched_replacement.inflect(case_and_number_grammemes)
-                    if replacement_word:
-                        replacement_word = replacement_word.word
-                    else:
-                        print('bad inflect')
-                        return None
                 
-
+                grammemes = parsed_word.tag.grammemes 
+                cleaned_grammemes = lower_grammar_restrictions(grammemes)
+                
+                replacement_inflected = stepwise_inflect(matched_replacement, cleaned_grammemes)
+                
+                if not replacement_inflected:
+                    print(f'bad inflect for replacement: {target} -> {replacement}')
+                    return None
+                
+                replacement_word = replacement_inflected.word
+                
                 if token.istitle():
                     replacement_word = replacement_word.capitalize()
                 
@@ -95,5 +111,6 @@ def replace_word(sentence, target, replacement, morph):
             new_tokens.append(token)
     
     if not replaced:
+        print(f'no replacement for {target}')
         return None
     return new_tokens

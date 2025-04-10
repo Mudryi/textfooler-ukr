@@ -133,10 +133,6 @@ def main():
     nclasses = 5 # "How many classes for classification."
     target_model = 'xlm-roberta-base' # "Target models for text classification: fasttext, charcnn, word level lstm "
     target_model_path = "/home/mudryi/phd_projects/xml-roberta-finetune-reviews/trained_models/tmdk/model_tmdk_7_1000" #"pre-trained target model path"
-
-    word_embeddings_path = None # "path to the word embeddings for the target model"
-    counter_fitting_embeddings_path = None # "path to the counter-fitting embeddings we used to find synonyms"
-    counter_fitting_cos_sim_path = None # "pre-compute the cosine similarity scores based on the counter-fitting embeddings"
     
     SBERT_path = 'sentence-transformers/paraphrase-xlm-r-multilingual-v1' # "Path to the USE encoder cache."
 
@@ -147,7 +143,7 @@ def main():
     import_score_threshold = -1 # "Required mininum importance score.")
     sim_score_threshold = 0.7 # "Required minimum semantic similarity score.")
     synonym_num = 50 # "Number of synonyms to extract"
-    data_size = 200 # "Data size to create adversaries" reviews have 9663 records
+    data_size = 2000 # "Data size to create adversaries" reviews have 9663 records
 
     if os.path.exists(output_dir) and os.listdir(output_dir):
         print("Output directory ({}) already exists and is not empty.".format(output_dir))
@@ -198,7 +194,6 @@ def main():
         probs = torch.softmax(logits, dim=1)
         return probs
     
-    # predictor = model.text_pred
     print("Model built!")
 
     # build the semantic similarity module
