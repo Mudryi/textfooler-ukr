@@ -8,8 +8,8 @@ from dataloader import read_corpus
 from sentence_sim import SBERT
 import criteria
 from prepare_synonym_dict import read_and_clean_synonym_dict
+from synonym_replacement import replace_word, tokenize_ukrainian
 import pymorphy2
-import re
 
 morph = pymorphy2.MorphAnalyzer(lang='uk')
 
@@ -17,44 +17,6 @@ device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cp
 
 path_to_ulif = '/home/mudryi/phd_projects/synonym_attack/synonyms_dictionaries/ulif_clean.json'
 synonym_dict = read_and_clean_synonym_dict(path_to_ulif)
-
-def get_correct_parsed_result(parsing_results, target_pos, target_gender=None):
-
-    for result in parsing_results:
-        if result.tag.POS == target_pos and target_gender and result.tag.gender == target_gender:
-            return result
-
-    for result in parsing_results:
-        if result.tag.POS == target_pos:
-            return result
-
-    return None
-
-def lower_grammar_restrictions(grammemes, target_gender):
-    grammemes_to_remove = [str(target_gender), 'Refl']
-    
-    new_grammemes = set(item for item in list(grammemes) if item not in grammemes_to_remove)
-    return new_grammemes
-
-def tokenize_ukrainian(text):
-    pattern = r"(\s+|[^\w\s']+|[\w']+)"
-    tokens = re.findall(pattern, text)
-    
-    final_tokens = []
-    i = 0
-    while i < len(tokens):
-        if (
-            i + 2 < len(tokens)
-            and tokens[i].isalpha()
-            and tokens[i+1] == "'"
-            and tokens[i+2].isalpha()
-        ):
-            final_tokens.append(tokens[i] + tokens[i+1] + tokens[i+2])
-            i += 3
-        else:
-            final_tokens.append(tokens[i])
-            i += 1
-    return final_tokens
 
 def is_word_token(tok):
     return tok.strip().isalpha()  # This excludes whitespace and punctuation
@@ -76,66 +38,6 @@ def get_all_synonyms(word):
     else:
         return []
 
-def replace_word(sentence, target, replacement):
-    target_normal = morph.parse(target)[0].normal_form
-    
-    tokens = tokenize_ukrainian(sentence)
-    
-    replaced = False
-    new_tokens = []
-
-    for i, token in enumerate(tokens):
-        target_gender = None
-        
-        if re.match(r'\w+', token):
-            parsed_word = morph.parse(token)[0]
-            
-            if parsed_word.normal_form == target_normal:
-                case_and_number_grammemes = parsed_word.tag.grammemes
-                target_pos = parsed_word.tag.POS
-
-                if target_pos == 'NOUN':
-                    target_gender = parsed_word.tag.gender
-
-                replacement_parsed = morph.parse(replacement)
-                matched_replacement = get_correct_parsed_result(replacement_parsed, target_pos, target_gender)
-                # print(matched_replacement)
-                # print(case_and_number_grammemes)
-
-                if matched_replacement:
-                    replacement_word = matched_replacement.inflect(case_and_number_grammemes)
-                else:
-                    # print('bad match')
-                    return None
-            
-                if replacement_word:
-                    replacement_word = replacement_word.word
-                else:
-                    case_and_number_grammemes = lower_grammar_restrictions(case_and_number_grammemes, target_gender)
-                    replacement_word = matched_replacement.inflect(case_and_number_grammemes)
-                    if replacement_word:
-                        replacement_word = replacement_word.word
-                    else:
-                        # print('bad inflect')
-                        return None
-                
-
-                if token.istitle():
-                    replacement_word = replacement_word.capitalize()
-                
-                new_tokens.append(replacement_word)
-                replaced = True
-            else:
-                new_tokens.append(token)
-        else:
-            new_tokens.append(token)
-    
-    if not replaced:
-        # print("Replacement failed for word:", target, replacement)
-        return None
-    # return ''.join(new_tokens)
-    return new_tokens
-
 def attack(text_ls, true_label, predictor, stop_words_set, sim_predictor=None,
            import_score_threshold=-1., sim_score_threshold=0.5, sim_score_window=15, synonym_num=50):
     
@@ -147,7 +49,6 @@ def attack(text_ls, true_label, predictor, stop_words_set, sim_predictor=None,
         return '', 0, orig_label, orig_label, 0
     else:
         num_queries = 1
-        len_text = len(text_ls)
 
         pos_ls = criteria.get_pos(text_ls)
         
@@ -190,7 +91,7 @@ def attack(text_ls, true_label, predictor, stop_words_set, sim_predictor=None,
         num_changed = 0
 
         for idx, synonyms in synonyms_all:
-            new_texts = [replace_word(''.join(text_prime), text_prime[idx], synonym) for synonym in synonyms]
+            new_texts = [replace_word(''.join(text_prime), text_prime[idx], synonym, morph=morph) for synonym in synonyms]
             new_texts = [x for x in new_texts if x is not None]
             if len(new_texts) == 0:
                 print(f"no synonyms for word {text_prime[idx]}")
@@ -245,11 +146,8 @@ def main():
     sim_score_window = 25 # "Text length or token number to compute the semantic similarity score")
     import_score_threshold = -1 # "Required mininum importance score.")
     sim_score_threshold = 0.7 # "Required minimum semantic similarity score.")
-    synonym_num = 100 # "Number of synonyms to extract"
-    batch_size = 32 # "Batch size to get prediction"
-    data_size = 2000 # "Data size to create adversaries" reviews have 9663 records
-    perturb_ratio = 0 # "Whether use random perturbation for ablation study")
-    max_seq_length = 256 # "max sequence length for BERT target model")
+    synonym_num = 50 # "Number of synonyms to extract"
+    data_size = 200 # "Data size to create adversaries" reviews have 9663 records
 
     if os.path.exists(output_dir) and os.listdir(output_dir):
         print("Output directory ({}) already exists and is not empty.".format(output_dir))
@@ -315,6 +213,7 @@ def main():
     adv_texts = []
     true_labels = []
     new_labels = []
+    text_ids = []
     log_file = open(os.path.join(output_dir, 'results_log'), 'a')
 
     stop_words_set = criteria.get_stopwords()
@@ -341,23 +240,25 @@ def main():
 
         if true_label == orig_label and true_label != new_label:
             changed_rates.append(changed_rate)
-            orig_texts.append(' '.join(text))
+            orig_texts.append(''.join(text))
             adv_texts.append(new_text)
             true_labels.append(true_label)
             new_labels.append(new_label)
+            text_ids.append(idx)
 
     message = 'For target model {}: original accuracy: {:.3f}%, adv accuracy: {:.3f}%, ' \
-              'avg changed rate: {:.3f}%, num of queries: {:.1f}\n'.format(target_model,
+              'avg changed rate: {:.3f}%, num of queries: {:.1f}, num_texts: {}\n'.format(target_model,
                                                                      (1-orig_failures/len(data))*100,
                                                                      (1-adv_failures/len(data))*100,
                                                                      np.mean(changed_rates)*100,
-                                                                     np.mean(nums_queries))
+                                                                     np.mean(nums_queries),
+                                                                     len(data))
     print(message)
     log_file.write(message)
 
     with open(os.path.join(output_dir, 'adversaries.txt'), 'w') as ofile:
-        for orig_text, adv_text, true_label, new_label in zip(orig_texts, adv_texts, true_labels, new_labels):
-            ofile.write('orig sent ({}):\t{}\nadv sent ({}):\t{}\n\n'.format(true_label, orig_text, new_label, adv_text))
+        for text_id, orig_text, adv_text, true_label, new_label in zip(text_ids, orig_texts, adv_texts, true_labels, new_labels):
+            ofile.write('text {}\norig sent ({}):\t{}\nadv sent ({}):\t{}\n\n'.format(text_id, true_label, orig_text, new_label, adv_text))
 
 if __name__ == "__main__":
     main()

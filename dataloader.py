@@ -44,8 +44,7 @@ def clean_str(string, TREC=False):
     return string.strip() if TREC else string.strip().lower()
 
 
-def read_corpus(path, clean=False, encoding='utf8', shuffle=False, lower=True):
-    # TODO fix splitting to split word and punctuation separate and remove lower to keep text as close to original as possible.
+def read_corpus(path, clean=False, encoding='utf8', shuffle=False, lower=False):
     df = pd.read_csv(path, encoding=encoding)
     
     # Assumes your CSV has 'label' and 'text' columns
