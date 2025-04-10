@@ -2,8 +2,52 @@ import re
 
 
 INTERCHANGEABLE_POS = {
-    'PRCL': {'ADVB'},
-    'ADVB': {'PRCL'}}
+    'PRCL': {'ADVB', 'CONJ'},
+    'ADVB': {'PRCL', 'Prnt'},
+    'Prnt': {'ADVB'},
+    'CONJ': {'PRCL'},
+    'ADJF': {'NPRO'},
+    'NPRO': {'ADJF'}}
+
+FORCE_ADVB = {'завжди', 'завше', 'навіщо', 'загалом'}
+
+def get_pos_safe(parsing_result):
+    if parsing_result.word in FORCE_ADVB:
+        return 'ADVB'
+    return parsing_result.tag.POS or str(parsing_result.tag).split(',')[0]
+
+
+def get_correct_parsed_result(parsing_results, target_pos, target_gender=None):
+    acceptable_pos = {target_pos} | INTERCHANGEABLE_POS.get(target_pos, set())
+
+    # Step 1: Exact POS + gender match
+    for result in parsing_results:
+        if get_pos_safe(result) in acceptable_pos and target_gender and result.tag.gender == target_gender:
+            return result
+
+    # Step 2: POS match without gender
+    for result in parsing_results:
+        if get_pos_safe(result) in acceptable_pos:
+            return result
+    
+    # Step 3: Special fallback: allow ADJF neut-nomn as ADVB
+    if target_pos == 'ADVB':
+        for result in parsing_results:
+            if result.tag.POS == 'ADJF' and {'neut', 'nomn'}.issubset(result.tag.grammemes):
+                return result
+    
+    if target_pos == 'ADJF':
+        for result in parsing_results:
+            if result.tag.POS == 'ADVB':
+                return result
+            
+    # Step 4: Special FORCE_ADVB override
+    for result in parsing_results:
+        if result.word.lower() in FORCE_ADVB and target_pos == 'ADVB':
+            return result
+
+    return None
+
 
 def tokenize_ukrainian(text):
     pattern = r"(\s+|[^\w\s']+|[\w']+)"
@@ -24,20 +68,6 @@ def tokenize_ukrainian(text):
             final_tokens.append(tokens[i])
             i += 1
     return final_tokens
-
-
-def get_correct_parsed_result(parsing_results, target_pos, target_gender=None):
-    acceptable_pos = {target_pos} | INTERCHANGEABLE_POS.get(target_pos, set())
-
-    for result in parsing_results:
-        if result.tag.POS in acceptable_pos and target_gender and result.tag.gender == target_gender:
-            return result
-
-    for result in parsing_results:
-        if result.tag.POS in acceptable_pos:
-            return result
-
-    return None
 
 
 def lower_grammar_restrictions(grammemes):
@@ -62,7 +92,7 @@ def stepwise_inflect(parse, target_grammemes,
     return current
 
 
-def replace_word(sentence, target, replacement, morph):
+def replace_word(sentence, target, replacement, morph, debug=False):
     target_normal = morph.parse(target)[0].normal_form
     
     tokens = tokenize_ukrainian(sentence)
@@ -75,7 +105,7 @@ def replace_word(sentence, target, replacement, morph):
             parsed_word = morph.parse(token)[0]
             
             if parsed_word.normal_form == target_normal:
-                target_pos = parsed_word.tag.POS
+                target_pos = get_pos_safe(parsed_word)
 
                 target_gender = parsed_word.tag.gender if target_pos in ('NOUN', 'ADJF') else None
 
@@ -84,9 +114,10 @@ def replace_word(sentence, target, replacement, morph):
                 matched_replacement = get_correct_parsed_result(replacement_parsed, target_pos, target_gender)
 
                 if not matched_replacement:
-                    print('bad match', target, replacement)
-                    # print(target_pos, target_gender)
-                    # print(replacement_parsed)
+                    if debug:
+                        print(f"bad match {target} -> {replacement}")
+                        print(target_pos, target_gender)
+                        print(replacement_parsed)
                     return None
                 
                 grammemes = parsed_word.tag.grammemes 
@@ -95,7 +126,8 @@ def replace_word(sentence, target, replacement, morph):
                 replacement_inflected = stepwise_inflect(matched_replacement, cleaned_grammemes)
                 
                 if not replacement_inflected:
-                    print(f'bad inflect for replacement: {target} -> {replacement}')
+                    if debug:
+                        print(f"bad inflect {target} -> {replacement}")
                     return None
                 
                 replacement_word = replacement_inflected.word
@@ -111,6 +143,7 @@ def replace_word(sentence, target, replacement, morph):
             new_tokens.append(token)
     
     if not replaced:
-        print(f'no replacement for {target}')
+        if debug:
+            print(f'no replacement for {target}')
         return None
     return new_tokens

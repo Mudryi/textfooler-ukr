@@ -1,3 +1,4 @@
+from synonym_replacement import get_pos_safe, INTERCHANGEABLE_POS
 import pymorphy2
 
 morph = pymorphy2.MorphAnalyzer(lang='uk')
@@ -35,28 +36,13 @@ pymorphy2_to_universal = {
 def get_pos(sent, tagset='universal'):
     pos_list = []
     for word in sent:
-        # Parse word with pymorphy2, take the most likely parse
         parsed = morph.parse(word)[0]
-        
+        pymorphy_pos = get_pos_safe(parsed)
+
         if tagset == 'default':
-            # Just return the raw pymorphy2 POS tag
-            # e.g. NOUN, VERB, INFN, ADJF, etc.
-            pos_list.append(parsed.tag.POS)
+            pos_list.append(pymorphy_pos)
         else:
-            # 'universal' -> map to a coarse-grained universal tag
-            raw_pos = parsed.tag.POS
-            # e.g. 'NOUN', 'VERB', 'ADJF', etc.
-            
-            # Use dictionary lookup, fallback to 'X'
-            mapped_pos = pymorphy2_to_universal.get(raw_pos, 'X')
-            
-            # If punctuation or symbols (sometimes tag.POS is None),
-            # you might decide to call them '.' instead of 'X'
-            # Example:
-            # if parsed.tag.is_punct:
-            #     mapped_pos = '.'
-            # but pymorphy2 marks punctuation as None or 'PNCT', so adjust as you like.
-            
+            mapped_pos = pymorphy2_to_universal.get(pymorphy_pos, 'X')
             pos_list.append(mapped_pos)
     
     return pos_list
@@ -66,3 +52,14 @@ def pos_filter(ori_pos, new_pos_list):
             else False
             for new_pos in new_pos_list]
     return same
+
+def pos_filter(ori_pos, new_pos_list):
+    results = []
+    for new_pos in new_pos_list:
+        if ori_pos == new_pos:
+            results.append(True)
+        elif new_pos in INTERCHANGEABLE_POS.get(ori_pos, set()):
+            results.append(True)
+        else:
+            results.append(False)
+    return results

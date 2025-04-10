@@ -46,48 +46,46 @@ def attack(text_ls, true_label, predictor, stop_words_set, sim_predictor=None,
     orig_prob = orig_probs.max()
 
     if true_label != orig_label:
-        return '', 0, orig_label, orig_label, 0
+        return '', 0, orig_label, orig_label, 0, []
     else:
         num_queries = 1
+        replacements = []
 
         pos_ls = criteria.get_pos(text_ls)
         
         # get importance score
-        perturbable_indices = [i for i, tok in enumerate(text_ls) if is_word_token(tok) and tok not in stop_words_set]
+        perturbable_indices = [i for i, tok in enumerate(text_ls) if is_word_token(tok) and tok.lower() not in stop_words_set]
         leave_1_texts = [text_ls[:i] + ['<oov>'] + text_ls[i+1:] for i in perturbable_indices]
         if len(leave_1_texts) == 0:
             print('no words for pertubation', ''.join(text_ls))
-            return '', 0, orig_label, orig_label, 0
+            return '', 0, orig_label, orig_label, 0, []
     
         leave_1_probs = predictor(leave_1_texts)
-
         num_queries += len(leave_1_texts)
-        leave_1_probs_argmax = torch.argmax(leave_1_probs, dim=-1)
-        import_scores = (orig_prob - leave_1_probs[:, orig_label] + (leave_1_probs_argmax != orig_label).float() * (leave_1_probs.max(dim=-1)[0] - torch.index_select(orig_probs, 0, leave_1_probs_argmax))).data.cpu().numpy()
-        words_perturb = []
 
+        leave_1_probs_argmax = torch.argmax(leave_1_probs, dim=-1)
+        import_scores = (orig_prob - leave_1_probs[:, orig_label] + 
+                         (leave_1_probs_argmax != orig_label).float() * 
+                         (leave_1_probs.max(dim=-1)[0] - torch.index_select(orig_probs, 0, leave_1_probs_argmax))
+                         ).data.cpu().numpy()
+
+        words_perturb = []
         for idx, score in sorted(zip(perturbable_indices, import_scores), key=lambda x: x[1], reverse=True):
-            try:
-                if score > import_score_threshold:
-                    words_perturb.append((idx, text_ls[idx]))
-            except:
-                print(idx, len(text_ls), import_scores.shape, text_ls, len(leave_1_texts))
+            if score > import_score_threshold:
+                words_perturb.append((idx, text_ls[idx]))
 
         # find synonyms
         synonyms_all = []
         for (position, word) in words_perturb:
-            # Use your custom dictionary-based function
             synonyms = get_all_synonyms(word)
             synonyms = [synonym for synonym in synonyms if len(synonym.split(' '))==1] #TODO explore to replace word to phrase
             synonyms = synonyms[:synonym_num]
-
             if synonyms:
                 synonyms_all.append((position, synonyms))
 
         # start replacing and attacking
         text_prime = text_ls.copy()
         text_cache = text_prime.copy()
-
         num_changed = 0
 
         for idx, synonyms in synonyms_all:
@@ -95,12 +93,13 @@ def attack(text_ls, true_label, predictor, stop_words_set, sim_predictor=None,
             new_texts = [x for x in new_texts if x is not None]
             if len(new_texts) == 0:
                 print(f"no synonyms for word {text_prime[idx]}")
-                continue 
+                continue
 
             new_probs = predictor(new_texts)
             num_queries += len(new_texts)
-            
-            semantic_sims = sim_predictor.semantic_sim([''.join(text_cache)] * len(new_texts), [''.join(text) for text in new_texts])[0]
+
+            semantic_sims = sim_predictor.semantic_sim([''.join(text_cache)] * len(new_texts),
+                                                       [''.join(text) for text in new_texts])[0]
             if len(new_probs.shape) < 2:
                 new_probs = new_probs.unsqueeze(0)
 
@@ -109,23 +108,30 @@ def attack(text_ls, true_label, predictor, stop_words_set, sim_predictor=None,
 
             # prevent incompatible pos
             synonyms_pos_ls = [criteria.get_pos(new_text[max(idx - 4, 0):idx + 5])[min(4, idx)]
-                                if len(new_text) > 10 else criteria.get_pos(new_text)[idx] for new_text in new_texts]
+                               if len(new_text) > 10 else criteria.get_pos(new_text)[idx] for new_text in new_texts]
             pos_mask = np.array(criteria.pos_filter(pos_ls[idx], synonyms_pos_ls))
             new_probs_mask *= pos_mask
 
             if np.sum(new_probs_mask) > 0:
-                text_prime[idx] = synonyms[(new_probs_mask * semantic_sims).argmax()]
+                replaced_word = synonyms[(new_probs_mask * semantic_sims).argmax()]
+                replacements.append((text_prime[idx], replaced_word, idx))
+                text_prime[idx] = replaced_word
                 num_changed += 1
                 break
             else:
                 new_label_probs = new_probs[:, orig_label] + torch.from_numpy(
-                        (semantic_sims < sim_score_threshold) + (1 - pos_mask).astype(float)).float().cuda()
+                    (semantic_sims < sim_score_threshold) + (1 - pos_mask).astype(float)
+                ).float().cuda()
+
                 new_label_prob_min, new_label_prob_argmin = torch.min(new_label_probs, dim=-1)
                 if new_label_prob_min < orig_prob:
-                    text_prime[idx] = synonyms[new_label_prob_argmin]
+                    replaced_word = synonyms[new_label_prob_argmin]
+                    replacements.append((text_prime[idx], replaced_word, idx))
+                    text_prime[idx] = replaced_word
                     num_changed += 1
             text_cache = text_prime[:]
-        return ''.join(text_prime), num_changed, orig_label, torch.argmax(predictor([text_prime])), num_queries
+
+        return ''.join(text_prime), num_changed, orig_label, torch.argmax(predictor([text_prime])), num_queries, replacements
 
 
 def main():
@@ -143,7 +149,7 @@ def main():
     import_score_threshold = -1 # "Required mininum importance score.")
     sim_score_threshold = 0.7 # "Required minimum semantic similarity score.")
     synonym_num = 50 # "Number of synonyms to extract"
-    data_size = 2000 # "Data size to create adversaries" reviews have 9663 records
+    data_size = 4000 # "Data size to create adversaries" reviews have 9663 records
 
     if os.path.exists(output_dir) and os.listdir(output_dir):
         print("Output directory ({}) already exists and is not empty.".format(output_dir))
@@ -209,6 +215,7 @@ def main():
     true_labels = []
     new_labels = []
     text_ids = []
+    all_replacements = []
     log_file = open(os.path.join(output_dir, 'results_log'), 'a')
 
     stop_words_set = criteria.get_stopwords()
@@ -218,7 +225,7 @@ def main():
         true_label = true_label - 1
         
 
-        new_text, num_changed, orig_label, new_label, num_queries = attack(text, true_label, predictor, stop_words_set, sim_predictor=sbert,
+        new_text, num_changed, orig_label, new_label, num_queries, replacements = attack(text, true_label, predictor, stop_words_set, sim_predictor=sbert,
                                                                            sim_score_threshold=sim_score_threshold,
                                                                            import_score_threshold=import_score_threshold,
                                                                            sim_score_window=sim_score_window,
@@ -240,6 +247,7 @@ def main():
             true_labels.append(true_label)
             new_labels.append(new_label)
             text_ids.append(idx)
+            all_replacements.append(replacements)
 
     message = 'For target model {}: original accuracy: {:.3f}%, adv accuracy: {:.3f}%, ' \
               'avg changed rate: {:.3f}%, num of queries: {:.1f}, num_texts: {}\n'.format(target_model,
@@ -252,8 +260,9 @@ def main():
     log_file.write(message)
 
     with open(os.path.join(output_dir, 'adversaries.txt'), 'w') as ofile:
-        for text_id, orig_text, adv_text, true_label, new_label in zip(text_ids, orig_texts, adv_texts, true_labels, new_labels):
-            ofile.write('text {}\norig sent ({}):\t{}\nadv sent ({}):\t{}\n\n'.format(text_id, true_label, orig_text, new_label, adv_text))
+        for text_id, orig_text, adv_text, true_label, new_label, repalcements in zip(text_ids, orig_texts, adv_texts, true_labels, new_labels, all_replacements):
+            ofile.write('text {}\norig sent ({}):\t{}\nadv sent ({}):\t{}\nReplacements {}\n\n'.format(text_id, true_label, orig_text, new_label, adv_text, repalcements))
+    
 
 if __name__ == "__main__":
     main()
