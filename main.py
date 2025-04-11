@@ -32,14 +32,19 @@ def get_all_synonyms(word):
     normal_form = get_normal_form(word, morph)
 
     if word in synonym_dict:
-        return synonym_dict[word]
+        synonyms = synonym_dict[word]
     elif normal_form in synonym_dict:
-        return synonym_dict[normal_form]
+        synonyms = synonym_dict[normal_form]
     else:
         return []
 
+    filtered_synonyms = [syn for syn in set(synonyms)
+                         if syn.lower() != word.lower() and syn.lower() != normal_form.lower()]
+    return filtered_synonyms
+
+
 def attack(text_ls, true_label, predictor, stop_words_set, sim_predictor=None,
-           import_score_threshold=-1., sim_score_threshold=0.5, sim_score_window=15, synonym_num=50):
+           import_score_threshold=-1., sim_score_threshold=0.5, synonym_num=50):
     
     orig_probs = predictor([text_ls]).squeeze()
     orig_label = torch.argmax(orig_probs)
@@ -90,7 +95,10 @@ def attack(text_ls, true_label, predictor, stop_words_set, sim_predictor=None,
 
         for idx, synonyms in synonyms_all:
             new_texts = [replace_word(''.join(text_prime), text_prime[idx], synonym, morph=morph) for synonym in synonyms]
-            new_texts = [x for x in new_texts if x is not None]
+
+            synonyms = [syn for text, syn in zip(new_texts, synonyms) if text is not None]
+            new_texts = [text for text in new_texts if text is not None]
+
             if len(new_texts) == 0:
                 print(f"no synonyms for word {text_prime[idx]}")
                 continue
@@ -115,7 +123,7 @@ def attack(text_ls, true_label, predictor, stop_words_set, sim_predictor=None,
             if np.sum(new_probs_mask) > 0:
                 replaced_word = synonyms[(new_probs_mask * semantic_sims).argmax()]
                 replacements.append((text_prime[idx], replaced_word, idx))
-                text_prime[idx] = replaced_word
+                text_prime = new_texts[(new_probs_mask * semantic_sims).argmax()]
                 num_changed += 1
                 break
             else:
@@ -127,9 +135,9 @@ def attack(text_ls, true_label, predictor, stop_words_set, sim_predictor=None,
                 if new_label_prob_min < orig_prob:
                     replaced_word = synonyms[new_label_prob_argmin]
                     replacements.append((text_prime[idx], replaced_word, idx))
-                    text_prime[idx] = replaced_word
+                    text_prime = new_texts[(new_probs_mask * semantic_sims).argmax()]
                     num_changed += 1
-            text_cache = text_prime[:]
+            text_cache = text_prime.copy()
 
         return ''.join(text_prime), num_changed, orig_label, torch.argmax(predictor([text_prime])), num_queries, replacements
 
@@ -228,7 +236,6 @@ def main():
         new_text, num_changed, orig_label, new_label, num_queries, replacements = attack(text, true_label, predictor, stop_words_set, sim_predictor=sbert,
                                                                            sim_score_threshold=sim_score_threshold,
                                                                            import_score_threshold=import_score_threshold,
-                                                                           sim_score_window=sim_score_window,
                                                                            synonym_num=synonym_num)
 
         if true_label != orig_label:

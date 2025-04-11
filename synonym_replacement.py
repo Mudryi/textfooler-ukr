@@ -102,7 +102,7 @@ def replace_word(sentence, target, replacement, morph, debug=False):
 
     for i, token in enumerate(tokens):        
         if re.match(r'\w+', token):
-            parsed_word = morph.parse(token)[0]
+            parsed_word = morph.parse(token)[0] # TODO add logic to go thoguh all possible parsed words
             
             if parsed_word.normal_form == target_normal:
                 target_pos = get_pos_safe(parsed_word)
