@@ -135,9 +135,9 @@ def attack(text_ls, true_label, predictor, stop_words_set, sim_predictor=None,
                 if new_label_prob_min < orig_prob:
                     replaced_word = synonyms[new_label_prob_argmin]
                     replacements.append((text_prime[idx], replaced_word, idx))
-                    text_prime = new_texts[(new_probs_mask * semantic_sims).argmax()]
+                    text_prime = new_texts[new_label_prob_argmin]
                     num_changed += 1
-            text_cache = text_prime.copy()
+            # text_cache = text_prime.copy() # remove to measure similairty not between each iteration, but between current sentence and original one
 
         return ''.join(text_prime), num_changed, orig_label, torch.argmax(predictor([text_prime])), num_queries, replacements
 
@@ -145,19 +145,19 @@ def attack(text_ls, true_label, predictor, stop_words_set, sim_predictor=None,
 def main():
     dataset_path = "/home/mudryi/phd_projects/synonym_attack/cross_domain_uk_reviews/test_reviews.csv" # "Which dataset to attack."
     nclasses = 5 # "How many classes for classification."
-    target_model = 'xlm-roberta-base' # "Target models for text classification: fasttext, charcnn, word level lstm "
-    target_model_path = "/home/mudryi/phd_projects/xml-roberta-finetune-reviews/trained_models/tmdk/model_tmdk_7_1000" #"pre-trained target model path"
+    target_model = "youscan/ukr-roberta-base" # "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+    target_model_path = "/home/mudryi/phd_projects/xml-roberta-finetune-reviews/trained_models/7ddc/model_7ddc_8_1000"
     
     SBERT_path = 'sentence-transformers/paraphrase-xlm-r-multilingual-v1' # "Path to the USE encoder cache."
 
-    output_dir = 'adv_results_reviews_xml_roberta' # "The output directory where the attack results will be written."
+    output_dir = 'adv_results_reviews_ukr-roberta' # "The output directory where the attack results will be written."
 
     ## Model hyperparameters
     sim_score_window = 25 # "Text length or token number to compute the semantic similarity score")
     import_score_threshold = -1 # "Required mininum importance score.")
     sim_score_threshold = 0.7 # "Required minimum semantic similarity score.")
-    synonym_num = 50 # "Number of synonyms to extract"
-    data_size = 4000 # "Data size to create adversaries" reviews have 9663 records
+    synonym_num = 200 # "Number of synonyms to extract"
+    data_size = 9663 # "Data size to create adversaries" reviews have 9663 records
 
     if os.path.exists(output_dir) and os.listdir(output_dir):
         print("Output directory ({}) already exists and is not empty.".format(output_dir))
@@ -229,7 +229,6 @@ def main():
     stop_words_set = criteria.get_stopwords()
     print('Start attacking!')
     for idx, (text, true_label) in tqdm(enumerate(data), total=len(data), desc="Processing samples"):
-
         true_label = true_label - 1
         
 
@@ -245,7 +244,11 @@ def main():
         if true_label != new_label:
             adv_failures += 1
 
-        changed_rate = 1.0 * num_changed / len(text)
+        word_tokens = [token for token in text if token.isalpha()]
+        if len(word_tokens) == 0:
+            changed_rate = 0
+        else:
+            changed_rate = 1.0 * num_changed / len(word_tokens)
 
         if true_label == orig_label and true_label != new_label:
             changed_rates.append(changed_rate)

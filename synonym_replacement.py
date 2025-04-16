@@ -3,11 +3,14 @@ import re
 
 INTERCHANGEABLE_POS = {
     'PRCL': {'ADVB', 'CONJ'},
-    'ADVB': {'PRCL', 'Prnt'},
+    'ADVB': {'PRCL', 'Prnt', 'PRED', 'GRND'},
     'Prnt': {'ADVB'},
     'CONJ': {'PRCL'},
     'ADJF': {'NPRO'},
-    'NPRO': {'ADJF'}}
+    'NPRO': {'ADJF'},
+    'PRED': {'ADVB'},
+    'GRND': {'ADVB'}
+    }
 
 FORCE_ADVB = {'завжди', 'завше', 'навіщо', 'загалом'}
 
@@ -93,7 +96,7 @@ def stepwise_inflect(parse, target_grammemes,
 
 
 def replace_word(sentence, target, replacement, morph, debug=False):
-    target_normal = morph.parse(target)[0].normal_form
+    target_normal_forms = [parsing_result.normal_form for parsing_result in morph.parse(target)]
     
     tokens = tokenize_ukrainian(sentence)
     
@@ -102,42 +105,44 @@ def replace_word(sentence, target, replacement, morph, debug=False):
 
     for i, token in enumerate(tokens):        
         if re.match(r'\w+', token):
-            parsed_word = morph.parse(token)[0] # TODO add logic to go thoguh all possible parsed words
+            parse_options = morph.parse(token)
+            replaced_curr_token = False
             
-            if parsed_word.normal_form == target_normal:
-                target_pos = get_pos_safe(parsed_word)
+            for parsed_word in parse_options:
+                if parsed_word.normal_form in target_normal_forms:
+                    target_pos = get_pos_safe(parsed_word)
+                    target_gender = parsed_word.tag.gender if target_pos in ('NOUN', 'ADJF') else None
 
-                target_gender = parsed_word.tag.gender if target_pos in ('NOUN', 'ADJF') else None
+                    replacement_parsed = morph.parse(replacement)
+                    matched_replacement = get_correct_parsed_result(replacement_parsed, target_pos, target_gender)
 
-                replacement_parsed = morph.parse(replacement)
-
-                matched_replacement = get_correct_parsed_result(replacement_parsed, target_pos, target_gender)
-
-                if not matched_replacement:
-                    if debug:
-                        print(f"bad match {target} -> {replacement}")
-                        print(target_pos, target_gender)
-                        print(replacement_parsed)
-                    return None
-                
-                grammemes = parsed_word.tag.grammemes 
-                cleaned_grammemes = lower_grammar_restrictions(grammemes)
-                
-                replacement_inflected = stepwise_inflect(matched_replacement, cleaned_grammemes)
-                
-                if not replacement_inflected:
-                    if debug:
-                        print(f"bad inflect {target} -> {replacement}")
-                    return None
-                
-                replacement_word = replacement_inflected.word
-                
-                if token.istitle():
-                    replacement_word = replacement_word.capitalize()
-                
-                new_tokens.append(replacement_word)
-                replaced = True
-            else:
+                    if not matched_replacement:
+                        if debug:
+                            print(f"bad match {target} -> {replacement}")
+                            print(target_pos, target_gender)
+                            print(replacement_parsed)
+                        continue
+                    
+                    grammemes = parsed_word.tag.grammemes 
+                    cleaned_grammemes = lower_grammar_restrictions(grammemes)
+                    replacement_inflected = stepwise_inflect(matched_replacement, cleaned_grammemes)
+                    
+                    if not replacement_inflected:
+                        if debug:
+                            print(f"bad inflect {target} -> {replacement}")
+                        continue
+                    
+                    replacement_word = replacement_inflected.word
+                    
+                    if token.istitle():
+                        replacement_word = replacement_word.capitalize()
+                    
+                    new_tokens.append(replacement_word)
+                    replaced = True
+                    replaced_curr_token = True
+                    break
+            
+            if not replaced_curr_token:
                 new_tokens.append(token)
         else:
             new_tokens.append(token)
