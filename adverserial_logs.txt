@@ -1,0 +1,11 @@
+(reviews) (youscan/ukr-roberta-base) original accuracy: 75.939%, adv accuracy: 32.661%, avg changed rate: 16.242%, num of queries: 169.9 num_texts: 9663
+(reviews) (sentence-transformers)    original accuracy: 79.271%, adv accuracy: 42.658%, avg changed rate: 13.611%, num of queries: 176.4 num_texts: 9663
+(reviews) (xlm-roberta-base)         original accuracy: 79.023%, adv accuracy: 46.393%, avg changed rate: 15.039%, num of queries: 200.6 num_texts: 9663
+
+(news) (youscan/ukr-roberta-base) original accuracy: 88.550%, adv accuracy: 70.170%, avg changed rate: 19.762%, num of queries: 106.3, num_texts: 10000
+(news) (sentence-transformers)    original accuracy: 93.380%, adv accuracy: 79.190%, avg changed rate: 20.268%, num of queries: 110.3, num_texts: 10000
+(news) (xlm-roberta-base)         original accuracy: 93.460%, adv accuracy: 79.520%, avg changed rate: 21.014%, num of queries: 110.9, num_texts: 10000
+
+(unlp) (youscan/ukr-roberta-base) original accuracy: 82.723%, adv accuracy: 39.005%, avg changed rate: 11.115%, num of queries: 690.7, num_texts: 382
+(unlp) (sentence-transformers)    original accuracy: 79.843%, adv accuracy: 37.696%, avg changed rate: 9.964%, num of queries: 689.5, num_texts: 382
+(unlp) (xlm-roberta-base)         original accuracy: 83.246%, adv accuracy: 43.455%, avg changed rate: 10.120%, num of queries: 682.6, num_texts: 382

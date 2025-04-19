@@ -44,33 +44,40 @@ def clean_str(string, TREC=False):
     return string.strip() if TREC else string.strip().lower()
 
 
-def read_corpus(path, clean=False, encoding='utf8', shuffle=False, lower=False):
+def read_corpus(path, dataset_name, data_size=10000, encoding='utf8'):
     df = pd.read_csv(path, encoding=encoding)
-    
-    # Assumes your CSV has 'label' and 'text' columns
-    if 'label' not in df.columns or 'text' not in df.columns:
-        raise ValueError("CSV must contain 'label' and 'text' columns")
+    if len(df)>data_size:
+        df = df.sample(data_size, random_state=1914)
     
     data = []
     labels = []
 
-    for _, row in df.iterrows():
-        text = row['text']
-        label = int(row['label'])
+    if dataset_name == 'reviews':
+        for _, row in df.iterrows():
+            text = row['text']
+            label = int(row['label'])-1
 
-        if clean:
-            text = clean_str(text.strip()) # NO cleaning because all models trained without cleaning
-        if lower:
-            text = text.lower()
+            labels.append(label)
+            data.append(tokenize_ukrainian(text))
 
-        labels.append(label)
-        # data.append(text.split())
-        data.append(tokenize_ukrainian(text))
+    elif dataset_name == 'news':
+        label_list = ['бізнес', 'новини', 'політика', 'спорт', 'технології']
+        label2id = {label: i for i, label in enumerate(label_list)}
+        df['target'] = df['target'].map(label2id)
+        
+        for _, row in df.iterrows():
+            text = row['title']
+            label = int(row['target'])
 
-    if shuffle:
-        combined = list(zip(data, labels))
-        random.shuffle(combined)
-        data, labels = zip(*combined)
-        data, labels = list(data), list(labels)
+            labels.append(label)
+            data.append(tokenize_ukrainian(text))
+
+    elif dataset_name == 'unlp':
+        for _, row in df.iterrows():
+            text = row['text']
+            label = int(row['label'])
+
+            labels.append(label)
+            data.append(tokenize_ukrainian(text))
 
     return data, labels

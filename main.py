@@ -100,7 +100,7 @@ def attack(text_ls, true_label, predictor, stop_words_set, sim_predictor=None,
             new_texts = [text for text in new_texts if text is not None]
 
             if len(new_texts) == 0:
-                print(f"no synonyms for word {text_prime[idx]}")
+                # print(f"no synonyms for word {text_prime[idx]}")
                 continue
 
             new_probs = predictor(new_texts)
@@ -143,135 +143,136 @@ def attack(text_ls, true_label, predictor, stop_words_set, sim_predictor=None,
 
 
 def main():
-    dataset_path = "/home/mudryi/phd_projects/synonym_attack/cross_domain_uk_reviews/test_reviews.csv" # "Which dataset to attack."
-    nclasses = 5 # "How many classes for classification."
-    target_model = "youscan/ukr-roberta-base" # "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
-    target_model_path = "/home/mudryi/phd_projects/xml-roberta-finetune-reviews/trained_models/7ddc/model_7ddc_8_1000"
-    
-    SBERT_path = 'sentence-transformers/paraphrase-xlm-r-multilingual-v1' # "Path to the USE encoder cache."
+    dataset_path = '/home/mudryi/phd_projects/xml-roberta-finetune-reviews/unlp_sharedtask_dataset/test.csv'
 
-    output_dir = 'adv_results_reviews_ukr-roberta' # "The output directory where the attack results will be written."
+    dataset_name = "unlp"
+    nclasses = 2 # "How many classes for classification."
+
+    SBERT_path = 'sentence-transformers/paraphrase-xlm-r-multilingual-v1' # "Path to the USE encoder cache."
+    sbert = SBERT(SBERT_path)
 
     ## Model hyperparameters
-    sim_score_window = 25 # "Text length or token number to compute the semantic similarity score")
     import_score_threshold = -1 # "Required mininum importance score.")
     sim_score_threshold = 0.7 # "Required minimum semantic similarity score.")
     synonym_num = 200 # "Number of synonyms to extract"
-    data_size = 9663 # "Data size to create adversaries" reviews have 9663 records
 
-    if os.path.exists(output_dir) and os.listdir(output_dir):
-        print("Output directory ({}) already exists and is not empty.".format(output_dir))
-    else:
-        os.makedirs(output_dir, exist_ok=True)
+    for target_model_path, target_model in zip(["/home/mudryi/phd_projects/xml-roberta-finetune-reviews/trained_models/1ozc/model_1ozc_14",
+                                                "/home/mudryi/phd_projects/xml-roberta-finetune-reviews/trained_models/zzl4/model_zzl4_14",
+                                                '/home/mudryi/phd_projects/xml-roberta-finetune-reviews/trained_models/p0g9/model_p0g9_14'],
+                                                ["youscan/ukr-roberta-base", 
+                                                 "sentence-transformers/paraphrase-multilingual-mpnet-base-v2", 
+                                                 "xlm-roberta-base"]):
+        print(f"attacking model {target_model}")
 
-    # get data to attack
-    texts, labels = read_corpus(dataset_path)
-    data = list(zip(texts, labels))
+        output_dir = f"adv_results_{dataset_name}_{target_model.split('/')[0]}" # "The output directory where the attack results will be written."
 
-    data = data[:data_size] # choose how many samples for adversary
-    print("Data import finished!")
-
-    # construct the model
-    print("Building Model...")
-    model = AutoModelForSequenceClassification.from_pretrained(target_model_path, num_labels=nclasses)
-    model.to(device)
-    model.eval()
-    tokenizer = AutoTokenizer.from_pretrained(target_model)
-
-    def predictor(texts):
-        """
-        texts: a list of strings, e.g. ["This is a test", "Another sample"]
-        Returns: a torch.Tensor of shape (batch_size, nclasses) with probabilities
-        """
-        if len(texts) > 0 and isinstance(texts[0], str):
-            texts = [texts]
-
-        # Now 'token_lists' is guaranteed to be a list of lists of tokens
-        # Convert each token-list into one full string
-        texts = [" ".join(tokens) for tokens in texts]
-
-        # Tokenize with truncation/padding, move to GPU if available
-        inputs = tokenizer(
-            texts, 
-            return_tensors="pt", 
-            truncation=True, 
-            padding=True
-        ).to(device)
-        
-        with torch.no_grad():
-            output = model(**inputs)
-        
-        # Output logits of shape [batch_size, nclasses]
-        logits = output.logits
-        
-        # Convert logits -> probabilities
-        probs = torch.softmax(logits, dim=1)
-        return probs
-    
-    print("Model built!")
-
-    # build the semantic similarity module
-    sbert = SBERT(SBERT_path)
-
-    # start attacking
-    orig_failures = 0.
-    adv_failures = 0.
-    changed_rates = []
-    nums_queries = []
-    orig_texts = []
-    adv_texts = []
-    true_labels = []
-    new_labels = []
-    text_ids = []
-    all_replacements = []
-    log_file = open(os.path.join(output_dir, 'results_log'), 'a')
-
-    stop_words_set = criteria.get_stopwords()
-    print('Start attacking!')
-    for idx, (text, true_label) in tqdm(enumerate(data), total=len(data), desc="Processing samples"):
-        true_label = true_label - 1
-        
-
-        new_text, num_changed, orig_label, new_label, num_queries, replacements = attack(text, true_label, predictor, stop_words_set, sim_predictor=sbert,
-                                                                           sim_score_threshold=sim_score_threshold,
-                                                                           import_score_threshold=import_score_threshold,
-                                                                           synonym_num=synonym_num)
-
-        if true_label != orig_label:
-            orig_failures += 1
+        if os.path.exists(output_dir) and os.listdir(output_dir):
+            print("Output directory ({}) already exists and is not empty.".format(output_dir))
         else:
-            nums_queries.append(num_queries)
-        if true_label != new_label:
-            adv_failures += 1
+            os.makedirs(output_dir, exist_ok=True)
 
-        word_tokens = [token for token in text if token.isalpha()]
-        if len(word_tokens) == 0:
-            changed_rate = 0
-        else:
-            changed_rate = 1.0 * num_changed / len(word_tokens)
+        # get data to attack
+        texts, labels = read_corpus(dataset_path, dataset_name)
+        data = list(zip(texts, labels))
 
-        if true_label == orig_label and true_label != new_label:
-            changed_rates.append(changed_rate)
-            orig_texts.append(''.join(text))
-            adv_texts.append(new_text)
-            true_labels.append(true_label)
-            new_labels.append(new_label)
-            text_ids.append(idx)
-            all_replacements.append(replacements)
+        print("Data import finished!")
 
-    message = 'For target model {}: original accuracy: {:.3f}%, adv accuracy: {:.3f}%, ' \
-              'avg changed rate: {:.3f}%, num of queries: {:.1f}, num_texts: {}\n'.format(target_model,
-                                                                     (1-orig_failures/len(data))*100,
-                                                                     (1-adv_failures/len(data))*100,
-                                                                     np.mean(changed_rates)*100,
-                                                                     np.mean(nums_queries),
-                                                                     len(data))
-    print(message)
-    log_file.write(message)
+        # construct the model
+        print("Building Model...")
+        model = AutoModelForSequenceClassification.from_pretrained(target_model_path, num_labels=nclasses)
+        model.to(device)
+        model.eval()
+        tokenizer = AutoTokenizer.from_pretrained(target_model)
 
-    with open(os.path.join(output_dir, 'adversaries.txt'), 'w') as ofile:
-        for text_id, orig_text, adv_text, true_label, new_label, repalcements in zip(text_ids, orig_texts, adv_texts, true_labels, new_labels, all_replacements):
-            ofile.write('text {}\norig sent ({}):\t{}\nadv sent ({}):\t{}\nReplacements {}\n\n'.format(text_id, true_label, orig_text, new_label, adv_text, repalcements))
+        def predictor(texts):
+            """
+            texts: a list of strings, e.g. ["This is a test", "Another sample"]
+            Returns: a torch.Tensor of shape (batch_size, nclasses) with probabilities
+            """
+            if len(texts) > 0 and isinstance(texts[0], str):
+                texts = [texts]
+
+            # Now 'token_lists' is guaranteed to be a list of lists of tokens
+            # Convert each token-list into one full string
+            texts = [" ".join(tokens) for tokens in texts]
+
+            # Tokenize with truncation/padding, move to GPU if available
+            inputs = tokenizer(
+                texts, 
+                return_tensors="pt", 
+                truncation=True, 
+                padding=True
+            ).to(device)
+            
+            with torch.no_grad():
+                output = model(**inputs)
+            
+            # Output logits of shape [batch_size, nclasses]
+            logits = output.logits
+            
+            # Convert logits -> probabilities
+            probs = torch.softmax(logits, dim=1)
+            return probs
+        
+        print("Model built!")
+
+        # start attacking
+        orig_failures = 0.
+        adv_failures = 0.
+        changed_rates = []
+        nums_queries = []
+        orig_texts = []
+        adv_texts = []
+        true_labels = []
+        new_labels = []
+        text_ids = []
+        all_replacements = []
+        log_file = open(os.path.join(output_dir, 'results_log'), 'a')
+
+        stop_words_set = criteria.get_stopwords()
+        print('Start attacking!')
+        for idx, (text, true_label) in tqdm(enumerate(data), total=len(data), desc="Processing samples"):
+            new_text, num_changed, orig_label, new_label, num_queries, replacements = attack(text, true_label, predictor, stop_words_set, sim_predictor=sbert,
+                                                                            sim_score_threshold=sim_score_threshold,
+                                                                            import_score_threshold=import_score_threshold,
+                                                                            synonym_num=synonym_num)
+
+            if true_label != orig_label:
+                orig_failures += 1
+            else:
+                nums_queries.append(num_queries)
+            if true_label != new_label:
+                adv_failures += 1
+
+            word_tokens = [token for token in text if token.isalpha()]
+            if len(word_tokens) == 0:
+                changed_rate = 0
+            else:
+                changed_rate = 1.0 * num_changed / len(word_tokens)
+
+            if true_label == orig_label and true_label != new_label:
+                changed_rates.append(changed_rate)
+                orig_texts.append(''.join(text))
+                adv_texts.append(new_text)
+                true_labels.append(true_label)
+                new_labels.append(new_label)
+                text_ids.append(idx)
+                all_replacements.append(replacements)
+
+        message = 'For target model {} Dataset {}: original accuracy: {:.3f}%, adv accuracy: {:.3f}%, ' \
+                'avg changed rate: {:.3f}%, num of queries: {:.1f}, num_texts: {}\n'.format(target_model,
+                                                                                            dataset_name,
+                                                                        (1-orig_failures/len(data))*100,
+                                                                        (1-adv_failures/len(data))*100,
+                                                                        np.mean(changed_rates)*100,
+                                                                        np.mean(nums_queries),
+                                                                        len(data))
+        print(message)
+        log_file.write(message)
+
+        with open(os.path.join(output_dir, 'adversaries.txt'), 'w') as ofile:
+            for text_id, orig_text, adv_text, true_label, new_label, repalcements in zip(text_ids, orig_texts, adv_texts, true_labels, new_labels, all_replacements):
+                ofile.write('text {}\norig sent ({}):\t{}\nadv sent ({}):\t{}\nReplacements {}\n\n'.format(text_id, true_label, orig_text, new_label, adv_text, repalcements))
     
 
 if __name__ == "__main__":
