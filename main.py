@@ -15,8 +15,10 @@ morph = pymorphy2.MorphAnalyzer(lang='uk')
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
-path_to_ulif = '/home/mudryi/phd_projects/synonym_attack/synonyms_dictionaries/ulif_clean.json'
-synonym_dict = read_and_clean_synonym_dict(path_to_ulif)
+# path_to_ulif = '/home/mudryi/phd_projects/synonym_attack/synonyms_dictionaries/ulif_clean.json'
+path_to_ulif = '/home/mudryi/phd_projects/synonym_attack/synonyms_dictionaries/synonimy_info_clean.json'
+
+synonym_dict = read_and_clean_synonym_dict(path_to_ulif, use_antonyms=True, used_hand_parse=True)
 
 def is_word_token(tok):
     return tok.strip().isalpha()  # This excludes whitespace and punctuation
@@ -142,12 +144,23 @@ def attack(text_ls, true_label, predictor, stop_words_set, sim_predictor=None,
         return ''.join(text_prime), num_changed, orig_label, torch.argmax(predictor([text_prime])), num_queries, replacements
 
 
-def main():
-    dataset_path = '/home/mudryi/phd_projects/xml-roberta-finetune-reviews/unlp_sharedtask_dataset/test.csv'
-
-    dataset_name = "unlp"
-    nclasses = 2 # "How many classes for classification."
-
+experiemnts = {"reviews":{"nclasses": 5,
+                          "dataset_path": '/home/mudryi/phd_projects/xml-roberta-finetune-reviews/cross_domain_uk_reviews/test_reviews.csv',
+                          "models": {"youscan/ukr-roberta-base": "/home/mudryi/phd_projects/xml-roberta-finetune-reviews/trained_models/7ddc/model_7ddc_7_600",
+                                     "sentence-transformers/paraphrase-multilingual-mpnet-base-v2": "/home/mudryi/phd_projects/xml-roberta-finetune-reviews/trained_models/7yuz/model_7yuz_4_1200",
+                                     "xlm-roberta-base": "/home/mudryi/phd_projects/xml-roberta-finetune-reviews/trained_models/tmdk/model_tmdk_7_600"},}, 
+               "news":{"nclasses": 5,
+                          "dataset_path": '/home/mudryi/phd_projects/xml-roberta-finetune-reviews/ua-news/test.csv',
+                          "models": {"youscan/ukr-roberta-base": '/home/mudryi/phd_projects/xml-roberta-finetune-reviews/trained_models/npz4/model_npz4_9_1000',
+                                     "sentence-transformers/paraphrase-multilingual-mpnet-base-v2": '/home/mudryi/phd_projects/xml-roberta-finetune-reviews/trained_models/1kjq/model_1kjq_9_2500',
+                                     "xlm-roberta-base": '/home/mudryi/phd_projects/xml-roberta-finetune-reviews/trained_models/3rzr/model_3rzr_9_2500'},}, 
+               "unlp":{"nclasses": 2,
+                          "dataset_path": '/home/mudryi/phd_projects/xml-roberta-finetune-reviews/unlp_sharedtask_dataset/test.csv',
+                          "models": {"youscan/ukr-roberta-base": "/home/mudryi/phd_projects/xml-roberta-finetune-reviews/trained_models/1ozc/model_1ozc_14",
+                                     "sentence-transformers/paraphrase-multilingual-mpnet-base-v2": "/home/mudryi/phd_projects/xml-roberta-finetune-reviews/trained_models/zzl4/model_zzl4_14",
+                                     "xlm-roberta-base": '/home/mudryi/phd_projects/xml-roberta-finetune-reviews/trained_models/p0g9/model_p0g9_14'},}
+               }
+def main(dataset_path, dataset_name, nclasses, models):
     SBERT_path = 'sentence-transformers/paraphrase-xlm-r-multilingual-v1' # "Path to the USE encoder cache."
     sbert = SBERT(SBERT_path)
 
@@ -156,15 +169,10 @@ def main():
     sim_score_threshold = 0.7 # "Required minimum semantic similarity score.")
     synonym_num = 200 # "Number of synonyms to extract"
 
-    for target_model_path, target_model in zip(["/home/mudryi/phd_projects/xml-roberta-finetune-reviews/trained_models/1ozc/model_1ozc_14",
-                                                "/home/mudryi/phd_projects/xml-roberta-finetune-reviews/trained_models/zzl4/model_zzl4_14",
-                                                '/home/mudryi/phd_projects/xml-roberta-finetune-reviews/trained_models/p0g9/model_p0g9_14'],
-                                                ["youscan/ukr-roberta-base", 
-                                                 "sentence-transformers/paraphrase-multilingual-mpnet-base-v2", 
-                                                 "xlm-roberta-base"]):
+    for target_model, target_model_path in models.items():
         print(f"attacking model {target_model}")
 
-        output_dir = f"adv_results_{dataset_name}_{target_model.split('/')[0]}" # "The output directory where the attack results will be written."
+        output_dir = f"adv_results_{dataset_name}_{target_model.split('/')[0]}_synonym_info" # "The output directory where the attack results will be written."
 
         if os.path.exists(output_dir) and os.listdir(output_dir):
             print("Output directory ({}) already exists and is not empty.".format(output_dir))
@@ -276,4 +284,11 @@ def main():
     
 
 if __name__ == "__main__":
-    main()
+    for key in experiemnts:
+        print(f"Running experiment for {key}")
+        dataset_info = experiemnts[key]
+        dataset_path = dataset_info["dataset_path"]
+        nclasses = dataset_info["nclasses"]
+        models = dataset_info["models"]
+
+        main(dataset_path, key, nclasses, models)

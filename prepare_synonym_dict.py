@@ -342,8 +342,120 @@ def remove_synonyms(synonym_dict, deletions):
                 if value in synonym_dict[key]:  # Check if the value exists in the list
                     synonym_dict[key].remove(value)
 
-def read_and_clean_synonym_dict(path_to_dict):
+def add_synonyms_from_antonyms_info(synonym_dict, antonyms):
+    for lemma in antonyms.keys():
+        if lemma in synonym_dict:
+            synonym_dict[lemma] = list(set(synonym_dict[lemma] + antonyms[lemma]['synonyms']))
+        else:
+            synonym_dict[lemma] = antonyms[lemma]['synonyms']
+    return synonym_dict
+
+def remove_antonyms_from_synonym_dict(synonym_dict, antonyms):
+    for lemma in antonyms.keys():
+        if lemma in synonym_dict:
+            synonym_dict[lemma] = [item for item in synonym_dict[lemma] if item not in antonyms[lemma]['antonyms']]
+    return synonym_dict
+
+import json
+
+def load_entries_by_lemma(path):
+    """
+    Load a JSON-lines file into a dict keyed by each entry's 'lemma'.
+    Tries UTF-8 (with BOM) then CP1251 if decoding fails.
+    """
+    for enc in ('utf-8-sig', 'cp1251'):
+        try:
+            with open(path, 'r', encoding=enc, errors='strict') as f:
+                data = {}
+                for lineno, line in enumerate(f, 1):
+                    line = line.strip()
+                    if not line:
+                        continue
+
+                    # first try normal JSON
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        # maybe double-escaped unicode like "\\u043d"
+                        fixed = line.encode('utf-8').decode('unicode_escape')
+                        entry = json.loads(fixed)
+
+                    lemma = entry.get('lemma').lower()
+                    if not lemma:
+                        raise ValueError(f"Line {lineno}: missing 'lemma' field")
+
+                    # store the whole entry (minus lemma if you want)
+                    data[lemma] = {
+                        'url': entry.get('url'),
+                        'synonyms': entry.get('synonyms', []),
+                        'antonyms': entry.get('antonyms', []),
+                        'samples': entry.get('samples', []),
+                    }
+                    data[lemma]['antonyms'] = [i.lower() for i in data[lemma]['antonyms']]
+                    data[lemma]['synonyms'] = [i.lower() for i in data[lemma]['synonyms']]
+                return data
+
+        except (UnicodeDecodeError, ValueError) as e:
+            print(f"✘ Failed to load with encoding {enc!r}: {e!s}")
+
+    raise UnicodeError(f"Could not decode {path!r} with any of utf-8-sig or cp1251")
+
+
+def load_dict_from_json(path: str) -> dict:
+    with open(path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+from collections import defaultdict
+from typing import Dict, List
+
+def merge_synonym_dicts(
+    d1: Dict[str, List[str]],
+    d2: Dict[str, List[str]],
+    dedupe: bool = True
+) -> Dict[str, List[str]]:
+    """
+    Merge two dicts mapping word → [synonyms].
+    - Keys in both get their lists concatenated.
+    - Keys in only one are copied over.
+    - If dedupe=True, duplicate synonyms are removed (preserving order).
+    """
+    merged = defaultdict(list)
+
+    # add from first dict
+    for word, syns in d1.items():
+        merged[word].extend(syns)
+
+    # add from second dict
+    for word, syns in d2.items():
+        merged[word].extend(syns)
+
+    if dedupe:
+        # remove duplicates while preserving order
+        for word, syns in merged.items():
+            seen = set()
+            unique = []
+            for s in syns:
+                if s not in seen:
+                    seen.add(s)
+                    unique.append(s)
+            merged[word] = unique
+
+    return dict(merged)
+
+
+def read_and_clean_synonym_dict(path_to_dict, use_antonyms=False, used_hand_parse=False):
     synonym_dict = read_and_process_synonym_dict(path_to_dict)
+
+    if used_hand_parse:
+        hand_parsed = load_dict_from_json('hand_parsed_top_100.json')
+        synonym_dict = merge_synonym_dicts(synonym_dict, hand_parsed)
+
+    if use_antonyms:
+        antonyms = load_entries_by_lemma('/home/mudryi/phd_projects/synonym_attack/synonyms_dictionaries/antonimy.jsonlines')
+        synonym_dict = add_synonyms_from_antonyms_info(synonym_dict, antonyms)
+        synonym_dict = remove_antonyms_from_synonym_dict(synonym_dict, antonyms)
+
     remove_synonyms(synonym_dict, deletions)
 
     for key in synonym_dict:
